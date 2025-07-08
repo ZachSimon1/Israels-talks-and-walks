@@ -1,0 +1,627 @@
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import ReactDOM from 'react-dom/client';
+import { GoogleGenAI } from "@google/genai";
+import type { Trail, Post, Partner } from './types';
+
+// --- GEMINI SERVICE ---
+let ai: GoogleGenAI | undefined;
+try {
+  // This will fail in a browser environment without a build process.
+  // The app is designed to handle this failure gracefully.
+  ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+} catch (error) {
+  console.error("Could not initialize GoogleGenAI. Running in an environment without process.env?", error);
+}
+
+const generateTrailIdea = async (prompt: string): Promise<string> => {
+  if (!ai) {
+    return "שירות ה-AI אינו זמין כרגע. ייתכן שמפתח ה-API אינו מוגדר בסביבה זו.";
+  }
+  try {
+    const systemInstruction = "אתה מדריך טיולים מומחה בישראל. המשימה שלך היא לתת הצעות יצירתיות, מעוררות השראה ובטוחות למסלולי טיול בישראל על סמך הקלט של המשתמש. תאר את החוויה בצורה חיה וצבעונית. התשובה שלך צריכה להיות בעברית, בפסקה אחת קצרה.";
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-preview-04-17",
+      contents: prompt,
+      config: {
+        systemInstruction: systemInstruction,
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    });
+
+    return response.text;
+  } catch (error) {
+    console.error("Error generating trail idea:", error);
+    return "מצטערים, ארעה שגיאה בעת יצירת רעיון למסלול. נסה שוב מאוחר יותר.";
+  }
+};
+
+// --- ICONS (as React Components) ---
+const MountainIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="m8 3 4 8 5-5 5 15H2L8 3z" />
+  </svg>
+);
+const ClockIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="12" cy="12" r="10" />
+    <polyline points="12 6 12 12 16 14" />
+  </svg>
+);
+const RouteIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <circle cx="6" cy="19" r="3" />
+    <path d="M9 19c0-3.87 3.13-7 7-7h0" />
+    <circle cx="17" cy="5" r="3" />
+    <path d="M14 5c0 3.87-3.13 7-7 7h0" />
+  </svg>
+);
+const UsersIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" />
+    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+  </svg>
+);
+const WhatsAppIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.297-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z" />
+  </svg>
+);
+const ThumbsUpIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M7 10v12" />
+    <path d="M17 10V4a2 2 0 0 0-2-2h-3a2 2 0 0 0-2 2v6h5l2 8" />
+  </svg>
+);
+const MessageSquareIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+  </svg>
+);
+
+
+// --- MOCK DATA ---
+const NAV_ITEMS = [
+  { name: 'דף הבית', page: 'home' },
+  { name: 'גלו מסלולים', page: 'explore' },
+  { name: 'קהילה', page: 'community' },
+  { name: 'מצאו שותפים', page: 'partners' },
+  { name: 'אודות', page: 'about' },
+];
+
+const TRAILS_DATA: Trail[] = [
+  { id: 1, name: 'שביל ישראל: מקטע הר מירון', region: 'צפון', length: 14, duration: 6, difficulty: 'קשה', image: 'https://picsum.photos/seed/meron/800/600', description: 'מקטע מאתגר ויפהפה של שביל ישראל, העובר בנופים גליליים עוצרי נשימה.', elevation: 800 },
+  { id: 2, name: 'נחל עמוד', region: 'צפון', length: 9, duration: 4, difficulty: 'בינוני', image: 'https://picsum.photos/seed/amud/800/600', description: 'מסלול קלאסי בצפון הכולל הליכה לצד נחל זורם, בריכות שכשוך וטבע ירוק.', elevation: 350 },
+  { id: 3, name: 'עין גדי לנחל ערוגות', region: 'מדבר יהודה', length: 6, duration: 3, difficulty: 'קל', image: 'https://picsum.photos/seed/eingedi/800/600', description: 'נווה מדבר קסום עם מפלים ובריכות, מושלם למשפחות ולימים חמים.', elevation: 200 },
+  { id: 4, name: 'המכתש הקטן', region: 'נגב', length: 8, duration: 5, difficulty: 'בינוני', image: 'https://picsum.photos/seed/makhtesh/800/600', description: 'חוויה גיאולוגית ייחודית בלב המדבר, עם תצפיות מרהיבות וצבעי אדמה מגוונים.', elevation: 400 },
+];
+
+const INITIAL_POSTS_DATA: Post[] = [
+  { id: 1, author: 'דנה לוי', authorAvatar: 'https://picsum.photos/seed/dana/100/100', content: 'סיימנו את מקטע הר מירון! היה מאתגר אבל הנוף שווה כל רגע. ממליצה בחום!', timestamp: 'לפני 3 שעות', likes: 24, comments: 5, image: 'https://picsum.photos/seed/danapost/600/400' },
+  { id: 2, author: 'אבי כהן', authorAvatar: 'https://picsum.photos/seed/avi/100/100', content: 'מחפש המלצה למסלול קליל עם ילדים באזור ירושלים לסופ"ש הקרוב. יש רעיונות?', timestamp: 'לפני יום', likes: 12, comments: 8 },
+  { id: 3, author: 'נועה ישראלי', authorAvatar: 'https://picsum.photos/seed/noa/100/100', content: 'מישהו יודע אם יש זרימה בנחל כזיב?', timestamp: 'לפני יומיים', likes: 18, comments: 4 },
+];
+
+const PARTNERS_DATA: Partner[] = [
+  { id: 1, name: 'יובל כהן', avatar: 'https://picsum.photos/seed/yuval/100/100', request: 'מחפש פרטנרים לטרק של 3 ימים במדבר יהודה באמצע החודש.' },
+  { id: 2, name: 'מאיה לוי', avatar: 'https://picsum.photos/seed/maya/100/100', request: 'רוצה לעשות את שביל הגולן בחלקים. מישהו בעניין להתחיל בסופ"ש הקרוב?' },
+  { id: 3, name: 'איתי שחר', avatar: 'https://picsum.photos/seed/itai/100/100', request: 'חדש בתחום, מחפש מסלולים קלילים באיזור המרכז להליכות שישי בבוקר.' },
+  { id: 4, name: 'רותם אברהם', avatar: 'https://picsum.photos/seed/rotem/100/100', request: 'מתכננת את נחל צאלים. מחפשת קבוצה קטנה ומנוסה.' },
+  { id: 5, name: 'דניאל גולן', avatar: 'https://picsum.photos/seed/daniel/100/100', request: 'מישהו זורם לטיול זריחה במצדה בשבת?' },
+  { id: 6, name: 'שירז בן דוד', avatar: 'https://picsum.photos/seed/shiraz/100/100', request: 'אוהבת לצלם. מחפשת שותפים סבלניים לעצירות צילום בנחלי הצפון.' },
+  { id: 7, name: 'עומר אדרי', avatar: 'https://picsum.photos/seed/omer/100/100', request: 'ריצת שטח בהרי ירושלים, מי מצטרף?' },
+  { id: 8, name: 'הילה חדד', avatar: 'https://picsum.photos/seed/hila/100/100', request: 'מחפשת שותפה לטיולים רגועים עם הכלבה שלי.' },
+  { id: 9, name: 'ליאור מזרחי', avatar: 'https://picsum.photos/seed/lior/100/100', request: 'מת על טיולי מים. מחפש המלצות ושותפים למסלולים רטובים.' },
+  { id: 10, name: 'תמר ביטון', avatar: 'https://picsum.photos/seed/tamar/100/100', request: 'סטודנטית, גמישה בשעות. רוצה לטייל כמה שיותר בזול.' },
+  { id: 11, name: 'נדב פרץ', avatar: 'https://picsum.photos/seed/nadav/100/100', request: 'מחפש קבוצה לטיול ירח מלא במכתש רמון.' },
+  { id: 12, name: 'אגם יוסף', avatar: 'https://picsum.photos/seed/agam/100/100', request: 'רוצה לחזור לשביל ישראל. מחפשת מישהו להתחיל איתו את המקטעים הראשונים מהדרום.' },
+  { id: 13, name: 'ברק שמעון', avatar: 'https://picsum.photos/seed/barak/100/100', request: 'מטייל עם רחפן, מחפש מקומות פוטוגניים ושותפים.' },
+  { id: 14, name: 'זוהר דהן', avatar: 'https://picsum.photos/seed/zohar/100/100', request: 'אמא ל-2, מחפשת המלצות ופרטנרים לטיולים עם ילדים.' },
+  { id: 15, name: 'גיא אזולאי', avatar: 'https://picsum.photos/seed/guy/100/100', request: 'חייל בסופ"שים. מחפש טיולים אינטנסיביים לשחרור לחצים.' },
+  { id: 16, name: 'עדי כץ', avatar: 'https://picsum.photos/seed/adi/100/100', request: 'מתעניינת בליקוט צמחי מאכל. מישהו רוצה להצטרף לסיור ליקוט?' },
+  { id: 17, name: 'רון טל', avatar: 'https://picsum.photos/seed/ron/100/100', request: 'טיולי אופניים בלבד. מחפש שותפים לרכיבות שטח מאתגרות.' },
+  { id: 18, name: 'אורלי גבאי', avatar: 'https://picsum.photos/seed/orly/100/100', request: 'פנסיונרית עם הרבה זמן פנוי. אוהבת מסלולים היסטוריים וסיפורי דרך.' },
+  { id: 19, name: 'שי כהנא', avatar: 'https://picsum.photos/seed/shai/100/100', request: 'חובב גיאולוגיה. אשמח למצוא שותפים שמתעניינים בסלעים ובתצורות נוף.' },
+  { id: 20, name: 'אלינור מלכה', avatar: 'https://picsum.photos/seed/elinor/100/100', request: 'מחפשת שקט. מעדיפה מסלולים פחות מוכרים ולא המוניים.' },
+];
+
+// --- HOOKS ---
+const useOnScreen = (ref: React.RefObject<HTMLElement>, rootMargin = '0px'): boolean => {
+    const [isIntersecting, setIntersecting] = useState(false);
+    useEffect(() => {
+        const observer = new IntersectionObserver(
+            ([entry]) => {
+                if (entry.isIntersecting) {
+                    setIntersecting(true);
+                    observer.unobserve(entry.target);
+                }
+            },
+            { rootMargin }
+        );
+        const currentRef = ref.current;
+        if (currentRef) {
+            observer.observe(currentRef);
+        }
+        return () => {
+            if(currentRef) {
+                observer.unobserve(currentRef);
+            }
+        };
+    }, [ref, rootMargin]);
+    return isIntersecting;
+};
+
+
+// --- HELPER COMPONENTS ---
+const AnimatedSection: React.FC<{ children: React.ReactNode, className?: string }> = ({ children, className }) => {
+    const ref = useRef(null);
+    const isVisible = useOnScreen(ref, '-100px');
+    return (
+        <section ref={ref} className={`${className || ''} transition-all duration-1000 ease-in-out ${isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
+            {children}
+        </section>
+    );
+};
+
+type NavigateFunction = (page: string, data?: any) => void;
+
+// --- UI COMPONENTS ---
+const Header: React.FC<{ onNavigate: NavigateFunction, onLogoClick: () => void, currentPage: string }> = ({ onNavigate, onLogoClick, currentPage }) => {
+    const [isMenuOpen, setIsMenuOpen] = useState(false);
+    const whatsappLink = "https://chat.whatsapp.com/G5hl91fRDOKBO5ejguAl77?mode=r_t";
+
+    return (
+        <header className="bg-white/80 backdrop-blur-lg shadow-md sticky top-0 z-50">
+            <div className="container mx-auto px-6 py-3 flex justify-between items-center">
+                <div onClick={onLogoClick} className="flex items-center gap-2 cursor-pointer">
+                    <MountainIcon className="w-8 h-8 text-emerald-600" />
+                    <span className="text-2xl font-bold text-emerald-700">שבילי ישראל</span>
+                </div>
+                <nav className="hidden md:flex items-center gap-6">
+                    {NAV_ITEMS.map(item => (
+                        <button
+                            key={item.page}
+                            onClick={() => onNavigate(item.page)}
+                            className={`transition-colors font-medium pb-1 border-b-2 ${currentPage === item.page ? 'text-emerald-600 font-bold border-emerald-500' : 'text-slate-600 hover:text-emerald-600 border-transparent'}`}
+                        >
+                            {item.name}
+                        </button>
+                    ))}
+                </nav>
+                <div className="hidden md:flex items-center gap-2">
+                    <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
+                        <button className="bg-emerald-500 text-white px-4 py-2 rounded-full hover:bg-emerald-600 transition-all font-semibold">הצטרפו</button>
+                    </a>
+                </div>
+                <div className="md:hidden">
+                    <button onClick={() => setIsMenuOpen(!isMenuOpen)}>
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            {isMenuOpen && (
+                <div className="md:hidden bg-white py-4">
+                    {NAV_ITEMS.map(item => (
+                        <button
+                            key={item.page}
+                            onClick={() => { onNavigate(item.page); setIsMenuOpen(false); }}
+                            className={`block w-full text-right px-6 py-2 ${currentPage === item.page ? 'bg-emerald-100 text-emerald-700 font-semibold' : 'text-slate-600 hover:bg-emerald-50'}`}
+                        >
+                            {item.name}
+                        </button>
+                    ))}
+                    <div className="px-6 mt-2">
+                        <a href={whatsappLink} target="_blank" rel="noopener noreferrer" className="w-full">
+                            <button className="bg-emerald-500 text-white px-4 py-2 rounded-full hover:bg-emerald-600 transition-all font-semibold w-full">הצטרפו</button>
+                        </a>
+                    </div>
+                </div>
+            )}
+        </header>
+    );
+};
+
+const Footer: React.FC = () => (
+    <footer className="bg-slate-800 text-white pt-10 pb-6 mt-20">
+        <div className="container mx-auto px-6 text-center">
+            <div className="mb-6">
+                <h3 className="text-xl font-bold mb-2 text-emerald-300">צריכים אתר מדהים, לוגו קליט או סרטון מקצועי?</h3>
+                <p className="text-slate-300">אתר זה נבנה ועוצב על ידי <span className="font-bold">סיימונולושן</span> - המומחים שלכם בבניית אתרים, עיצוב לוגואים ועריכת סרטונים.</p>
+            </div>
+            <div className="mb-6">
+                <p className="text-slate-300">לפרטים והצעת מחיר שלחו הודעה: <span className="font-bold ltr-grid inline-block">055-3151070</span></p>
+            </div>
+            <a href="https://wa.me/972553151070" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 bg-green-500 text-white px-6 py-3 rounded-full hover:bg-green-600 transition-transform hover:scale-105 transform text-lg font-semibold">
+                <WhatsAppIcon className="w-6 h-6" />
+                <span>שלחו הודעה ב-WhatsApp</span>
+            </a>
+        </div>
+    </footer>
+);
+
+const TrailCard: React.FC<{ trail: Trail, onNavigate: NavigateFunction }> = ({ trail, onNavigate }) => (
+    <div onClick={() => onNavigate('trailDetail', trail)} className="bg-white rounded-xl shadow-lg overflow-hidden transform hover:-translate-y-2 transition-all duration-300 cursor-pointer group">
+        <div className="h-48 overflow-hidden">
+            <img src={trail.image} alt={trail.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+        </div>
+        <div className="p-5">
+            <h3 className="text-xl font-bold text-slate-800 group-hover:text-emerald-600 transition-colors">{trail.name}</h3>
+            <p className="text-sm text-slate-500 mb-3">{trail.region}</p>
+            <div className="flex justify-between text-slate-600 text-sm">
+                <div className="flex items-center gap-1.5"><RouteIcon className="w-4 h-4 text-amber-500" /><span>{trail.length} ק"מ</span></div>
+                <div className="flex items-center gap-1.5"><ClockIcon className="w-4 h-4 text-amber-500" /><span>{trail.duration} שעות</span></div>
+                <div className="flex items-center gap-1.5"><MountainIcon className="w-4 h-4 text-amber-500" /><span>{trail.difficulty}</span></div>
+            </div>
+        </div>
+    </div>
+);
+
+const PostCard: React.FC<{ post: Post; onLike?: (id: number) => void; onComment?: (id: number) => void }> = ({ post, onLike, onComment }) => {
+    const hasInteractions = onLike && onComment;
+
+    return (
+        <div className="bg-white p-5 rounded-xl shadow-lg animate-fade-in">
+            <div className="flex items-center mb-3">
+                <img src={post.authorAvatar} alt={post.author} className="w-12 h-12 rounded-full object-cover me-4" />
+                <div>
+                    <p className="font-bold text-slate-800">{post.author}</p>
+                    <p className="text-xs text-slate-400">{post.timestamp}</p>
+                </div>
+            </div>
+            <p className="text-slate-700 mb-4">{post.content}</p>
+            {post.image && <img src={post.image} alt="Post image" className="rounded-lg w-full object-cover max-h-80 mb-4" />}
+            <div className={`flex justify-start gap-6 text-sm text-slate-500 ${hasInteractions ? 'mt-4 pt-4 border-t border-slate-100' : ''}`}>
+                 {hasInteractions ? (
+                    <>
+                        <button onClick={() => onLike(post.id)} className="flex items-center gap-2 hover:text-emerald-600 transition-colors font-medium">
+                            <ThumbsUpIcon className="w-5 h-5" />
+                            <span>{post.likes} לייקים</span>
+                        </button>
+                        <button onClick={() => onComment(post.id)} className="flex items-center gap-2 hover:text-emerald-600 transition-colors font-medium">
+                            <MessageSquareIcon className="w-5 h-5" />
+                            <span>{post.comments} תגובות</span>
+                        </button>
+                    </>
+                ) : (
+                    <>
+                        <span>{post.likes} לייקים</span>
+                        <span>{post.comments} תגובות</span>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+};
+
+const GeminiTrailGenerator: React.FC = () => {
+    const [prompt, setPrompt] = useState('');
+    const [isLoading, setIsLoading] = useState(false);
+    const [result, setResult] = useState('');
+    const [error, setError] = useState('');
+
+    const handleGenerate = async () => {
+        if (!prompt.trim()) return;
+        setIsLoading(true);
+        setError('');
+        setResult('');
+        try {
+            const idea = await generateTrailIdea(prompt);
+            setResult(idea);
+        } catch (e: any) {
+            setError(e.message || 'An unknown error occurred');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    return (
+        <AnimatedSection className="bg-emerald-600/10 p-8 rounded-2xl">
+            <div className="text-center">
+                <UsersIcon className="w-12 h-12 text-emerald-500 mx-auto mb-4" />
+                <h2 className="text-3xl font-extrabold text-slate-800 mb-2">צריכים רעיון לטיול?</h2>
+                <p className="text-slate-600 mb-6 max-w-2xl mx-auto">תנו ל-AI שלנו להציע לכם את החוויה הבאה. כתבו מה בא לכם (למשל, "מסלול קצר עם מים ליד תל אביב")</p>
+                <div className="max-w-xl mx-auto flex flex-col sm:flex-row gap-3">
+                    <input
+                        type="text"
+                        value={prompt}
+                        onChange={(e) => setPrompt(e.target.value)}
+                        placeholder="לדוגמה: טיול מדברי מאתגר..."
+                        className="w-full px-5 py-3 rounded-full border-2 border-slate-300 focus:border-emerald-500 focus:ring-emerald-500 transition"
+                        disabled={isLoading}
+                    />
+                    <button
+                        onClick={handleGenerate}
+                        disabled={isLoading || !ai}
+                        className="bg-amber-500 text-white font-bold px-8 py-3 rounded-full hover:bg-amber-600 transition-all transform hover:scale-105 disabled:bg-slate-400 disabled:scale-100 flex-shrink-0"
+                    >
+                        {isLoading ? 'חושב...' : 'ייצר רעיון'}
+                    </button>
+                </div>
+                {result && <div className="mt-6 bg-white/70 p-6 rounded-xl shadow-inner text-emerald-800 font-medium text-lg animate-fade-in">{result}</div>}
+                {error && <div className="mt-6 text-red-600">{error}</div>}
+            </div>
+        </AnimatedSection>
+    );
+};
+
+// --- PAGE COMPONENTS ---
+const HomePage: React.FC<{ onNavigate: NavigateFunction }> = ({ onNavigate }) => {
+    const whatsappLink = "https://chat.whatsapp.com/G5hl91fRDOKBO5ejguAl77?mode=r_t";
+    return (
+        <div className="space-y-20">
+            <div className="h-[70vh] min-h-[500px] flex items-center justify-center text-white text-center bg-cover bg-center" style={{ backgroundImage: 'linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(https://picsum.photos/seed/israel-hike/1920/1080)' }}>
+                <div>
+                    <h1 className="text-5xl md:text-7xl font-extrabold mb-4 animate-fade-in-down">השבילים מחכים לך</h1>
+                    <p className="text-xl md:text-2xl mb-8 max-w-3xl mx-auto animate-fade-in-up">קהילת המטיילים של ישראל. גלו, שתפו והתחברו.</p>
+                    <div className="space-x-4 rtl:space-x-reverse">
+                        <button onClick={() => onNavigate('explore')} className="bg-emerald-500 text-white px-8 py-3 rounded-full text-lg font-semibold hover:bg-emerald-600 transition-transform hover:scale-105 transform">גלו מסלולים</button>
+                        <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
+                          <button className="bg-white/30 backdrop-blur-sm text-white px-8 py-3 rounded-full text-lg font-semibold hover:bg-white/50 transition-transform hover:scale-105 transform">הצטרפו לקהילה</button>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div className="container mx-auto px-6">
+                <AnimatedSection>
+                    <h2 className="text-3xl font-bold text-center mb-8">מסלולים נבחרים</h2>
+                    <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 rtl-grid">
+                        {TRAILS_DATA.slice(0, 4).map(trail => <TrailCard key={trail.id} trail={trail} onNavigate={onNavigate} />)}
+                    </div>
+                </AnimatedSection>
+                <div className="mt-20">
+                    <GeminiTrailGenerator />
+                </div>
+                <AnimatedSection className="mt-20">
+                    <h2 className="text-3xl font-bold text-center mb-8">מה חדש בקהילה?</h2>
+                    <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+                        {INITIAL_POSTS_DATA.slice(0, 2).map(post => <PostCard key={post.id} post={post} />)}
+                    </div>
+                </AnimatedSection>
+                <AnimatedSection className="mt-20 text-center">
+                    <h2 className="text-3xl font-bold text-center mb-8">תמונת השבוע</h2>
+                    <div className="max-w-4xl mx-auto rounded-2xl shadow-2xl overflow-hidden">
+                        <img src="https://picsum.photos/seed/photoweek/1200/800" alt="Photo of the week" className="w-full h-full object-cover" />
+                    </div>
+                    <p className="mt-4 text-slate-600">הנוף מהר ארדון, צולם על ידי <span className="font-semibold">יעל ישראלי</span></p>
+                </AnimatedSection>
+            </div>
+        </div>
+    );
+};
+
+const ExploreTrailsPage: React.FC<{ onNavigate: NavigateFunction }> = ({ onNavigate }) => {
+    const [filter, setFilter] = useState('all');
+    const filteredTrails = TRAILS_DATA.filter(t => filter === 'all' || t.region === filter);
+
+    return (
+        <div className="container mx-auto px-6 py-10 animate-fade-in">
+            <h1 className="text-4xl font-extrabold text-center mb-4">גלו מסלולים ברחבי הארץ</h1>
+            <p className="text-lg text-slate-600 text-center mb-10 max-w-3xl mx-auto">
+                מפסגות הגליל הירוקות ועד קניוני הנגב הצבעוניים, הרפתקה חדשה נמצאת במרחק קליק. השתמשו במסננים כדי למצוא את הטיול המושלם עבורכם.
+            </p>
+            <div className="mb-8 flex justify-center gap-2 flex-wrap">
+                <button onClick={() => setFilter('all')} className={`px-4 py-2 rounded-full transition ${filter === 'all' ? 'bg-emerald-600 text-white font-semibold' : 'bg-white text-slate-700 hover:bg-emerald-100'}`}>הכל</button>
+                <button onClick={() => setFilter('צפון')} className={`px-4 py-2 rounded-full transition ${filter === 'צפון' ? 'bg-emerald-600 text-white font-semibold' : 'bg-white text-slate-700 hover:bg-emerald-100'}`}>צפון</button>
+                <button onClick={() => setFilter('מדבר יהודה')} className={`px-4 py-2 rounded-full transition ${filter === 'מדבר יהודה' ? 'bg-emerald-600 text-white font-semibold' : 'bg-white text-slate-700 hover:bg-emerald-100'}`}>מדבר יהודה</button>
+                <button onClick={() => setFilter('נגב')} className={`px-4 py-2 rounded-full transition ${filter === 'נגב' ? 'bg-emerald-600 text-white font-semibold' : 'bg-white text-slate-700 hover:bg-emerald-100'}`}>נגב</button>
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8 rtl-grid">
+                {filteredTrails.map(trail => <TrailCard key={trail.id} trail={trail} onNavigate={onNavigate} />)}
+            </div>
+        </div>
+    );
+};
+
+const TrailDetailsPage: React.FC<{ trail: Trail, onNavigate: NavigateFunction }> = ({ trail, onNavigate }) => (
+    <div className="container mx-auto px-6 py-10 animate-fade-in">
+        <button onClick={() => onNavigate('explore')} className="mb-6 text-emerald-600 hover:underline">
+            ← חזרה לכל המסלולים
+        </button>
+        <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
+            <img src={trail.image} alt={trail.name} className="w-full h-96 object-cover" />
+            <div className="p-8 md:p-12">
+                <h1 className="text-4xl md:text-5xl font-extrabold text-slate-800 mb-4">{trail.name}</h1>
+                <div className="flex flex-wrap gap-x-6 gap-y-2 mb-6 text-lg text-slate-600">
+                    <div className="flex items-center gap-2"><MountainIcon className="w-6 h-6 text-amber-500" /><span>אזור: {trail.region}</span></div>
+                    <div className="flex items-center gap-2"><RouteIcon className="w-6 h-6 text-amber-500" /><span>אורך: {trail.length} ק"מ</span></div>
+                    <div className="flex items-center gap-2"><ClockIcon className="w-6 h-6 text-amber-500" /><span>זמן: כ-{trail.duration} שעות</span></div>
+                    <div className="flex items-center gap-2"><MountainIcon className="w-6 h-6 text-amber-500" /><span>דרגת קושי: {trail.difficulty}</span></div>
+                    <div className="flex items-center gap-2"><MountainIcon className="w-6 h-6 text-amber-500" /><span>טיפוס מצטבר: {trail.elevation} מ'</span></div>
+                </div>
+                <p className="text-slate-700 leading-relaxed text-lg mb-8">{trail.description}</p>
+                <button onClick={() => onNavigate('partners')} className="bg-amber-500 text-white font-bold px-8 py-3 rounded-full hover:bg-amber-600 transition-all transform hover:scale-105">
+                    מצאו שותפים למסלול זה
+                </button>
+            </div>
+        </div>
+        <div className="mt-12">
+            <h2 className="text-3xl font-bold mb-6">גלריית תמונות מהקהילה</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <img src="https://picsum.photos/seed/gal1/400/300" className="rounded-lg shadow-md w-full h-full object-cover" alt="trail gallery" />
+                <img src="https://picsum.photos/seed/gal2/400/300" className="rounded-lg shadow-md w-full h-full object-cover" alt="trail gallery" />
+                <img src="https://picsum.photos/seed/gal3/400/300" className="rounded-lg shadow-md w-full h-full object-cover" alt="trail gallery" />
+                <img src="https://picsum.photos/seed/gal4/400/300" className="rounded-lg shadow-md w-full h-full object-cover" alt="trail gallery" />
+            </div>
+        </div>
+    </div>
+);
+
+
+const CommunityPage: React.FC = () => {
+    const [posts, setPosts] = useState<Post[]>(() => {
+        try {
+            const savedPosts = localStorage.getItem('shvili-israel-posts');
+            return savedPosts ? JSON.parse(savedPosts) : INITIAL_POSTS_DATA;
+        } catch (error) {
+            console.error("Error reading posts from localStorage", error);
+            return INITIAL_POSTS_DATA;
+        }
+    });
+    const [newPostContent, setNewPostContent] = useState('');
+
+    useEffect(() => {
+        try {
+            localStorage.setItem('shvili-israel-posts', JSON.stringify(posts));
+        } catch (error) {
+            console.error("Error saving posts to localStorage", error);
+        }
+    }, [posts]);
+
+    const handlePostSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newPostContent.trim()) return;
+
+        const newPost: Post = {
+            id: Date.now(),
+            author: 'אני',
+            authorAvatar: 'https://picsum.photos/seed/me/100/100',
+            content: newPostContent,
+            timestamp: 'עכשיו',
+            likes: 0,
+            comments: 0
+        };
+
+        setPosts([newPost, ...posts]);
+        setNewPostContent('');
+    };
+    
+    const handleLike = (postId: number) => {
+        setPosts(currentPosts =>
+            currentPosts.map(post =>
+                post.id === postId ? { ...post, likes: post.likes + 1 } : post
+            )
+        );
+    };
+
+    const handleComment = (postId: number) => {
+        setPosts(currentPosts =>
+            currentPosts.map(post =>
+                post.id === postId ? { ...post, comments: post.comments + 1 } : post
+            )
+        );
+    };
+
+    return (
+        <div className="container mx-auto px-6 py-10 animate-fade-in">
+            <h1 className="text-4xl font-extrabold text-center mb-4">הקול של הקהילה</h1>
+            <p className="text-lg text-slate-600 text-center mb-10 max-w-3xl mx-auto">כאן המקום לשאול, לשתף חוויות, לתת טיפים ולהתחבר עם מטיילים אחרים. שתפו אותנו בסיפור הדרך שלכם!</p>
+            <div className="max-w-3xl mx-auto mb-12">
+                <form onSubmit={handlePostSubmit} className="bg-white p-5 rounded-xl shadow-lg">
+                    <textarea
+                        value={newPostContent}
+                        onChange={(e) => setNewPostContent(e.target.value)}
+                        className="w-full p-3 border border-slate-300 rounded-lg mb-3 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                        rows={4}
+                        placeholder="מה על לבכם, מטיילים?"
+                    />
+                    <button type="submit" className="bg-emerald-500 text-white font-bold px-6 py-2 rounded-full hover:bg-emerald-600 transition-all w-full sm:w-auto">פרסם פוסט</button>
+                </form>
+            </div>
+            <div className="max-w-3xl mx-auto space-y-8">
+                {posts.map(post => <PostCard key={post.id} post={post} onLike={handleLike} onComment={handleComment} />)}
+            </div>
+        </div>
+    );
+};
+
+const FindPartnersPage: React.FC = () => {
+    const PartnerCard: React.FC<{ partner: Partner }> = ({ partner }) => (
+        <div className="bg-white p-5 rounded-xl shadow-lg flex items-start gap-4 animate-fade-in-up">
+            <img src={partner.avatar} alt={partner.name} className="w-16 h-16 rounded-full object-cover flex-shrink-0 mt-1" />
+            <div>
+                <h3 className="text-lg font-bold text-slate-800">{partner.name}</h3>
+                <p className="text-slate-600 mb-3">{partner.request}</p>
+                <button className="bg-amber-500 text-white text-sm font-semibold px-4 py-1.5 rounded-full hover:bg-amber-600 transition">צרו קשר</button>
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="container mx-auto px-6 py-10 animate-fade-in">
+            <h1 className="text-4xl font-extrabold text-center mb-4">מצאו שותפים לטיול הבא</h1>
+            <p className="text-lg text-slate-600 text-center mb-10 max-w-3xl mx-auto">לעולם אל תטיילו לבד (אלא אם אתם רוצים). כאן תוכלו למצוא אנשים נהדרים לחלוק איתם את החוויות שבדרך.</p>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-7xl mx-auto">
+                {PARTNERS_DATA.map(partner => <PartnerCard key={partner.id} partner={partner} />)}
+            </div>
+        </div>
+    );
+};
+
+const AboutPage: React.FC = () => (
+    <div className="container mx-auto px-6 py-10 animate-fade-in">
+        <div className="max-w-4xl mx-auto bg-white p-8 md:p-12 rounded-2xl shadow-xl">
+            <h1 className="text-4xl font-extrabold text-center mb-6 text-emerald-700">הסיפור של שבילי ישראל</h1>
+            <div className="prose prose-lg max-w-none text-slate-700 leading-relaxed space-y-6">
+                <p>קהילת 'שבילי ישראל' נולדה מתוך אהבה עמוקה לארץ, לטבע הפראי שלה ולאנשים שהולכים בה. אנחנו מאמינים שהשבילים הם לא רק דרכים פיזיות מנקודה לנקודה, אלא נתיבים שמחברים אותנו לעצמנו, זה לזה, ולסיפור הגדול של הארץ הזאת.</p>
+                <p>החזון שלנו הוא ליצור את הבית הדיגיטלי המקיף, החם והאמין ביותר עבור כל קהילת המטיילים בישראל. מקום שבו כל אחד, מהמטייל המתחיל ועד לשועל השבילים הוותיק, יוכל למצוא את מבוקשו: מידע אמין על מסלולים, השראה לטיול הבא, ציוד מתאים, ובעיקר - שותפים לדרך.</p>
+                <h2 className="text-2xl font-bold text-emerald-600 pt-4">מה תמצאו כאן?</h2>
+                <ul className="list-disc list-outside me-4 space-y-2">
+                    <li><strong>גילוי מסלולים:</strong> מאגר מתעדכן של מסלולים בכל רחבי הארץ, עם כל המידע שצריך לתכנון מושלם.</li>
+                    <li><strong>חוכמת ההמונים:</strong> פיד קהילה פעיל לשיתוף חוויות, לשאלות, למתן טיפים ואזהרות בטיחות.</li>
+                    <li><strong>מציאת שותפים:</strong> אזור ייעודי שיעזור לכם למצוא את האנשים הנכונים לחלוק איתם את המסע.</li>
+                    <li><strong>בטיחות וכבוד לטבע:</strong> אנחנו מחויבים לקידום טיולים בטוחים ואחראיים, תוך שמירה על הטבע הייחודי שלנו למען הדורות הבאים.</li>
+                </ul>
+                <p className="font-semibold text-center pt-6 text-xl">אז קדימה, קחו תרמיל, מלאו מים, והצטרפו אלינו. השבילים מחכים לכם!</p>
+            </div>
+        </div>
+    </div>
+);
+
+// --- MAIN APP COMPONENT ---
+const App = () => {
+    const [currentPage, setCurrentPage] = useState('home');
+    const [pageData, setPageData] = useState<any>(null);
+
+    const handleNavigation: NavigateFunction = useCallback((page, data = null) => {
+        setCurrentPage(page);
+        setPageData(data);
+        window.scrollTo(0, 0);
+    }, []);
+
+    const renderPage = () => {
+        switch (currentPage) {
+            case 'home':
+                return <HomePage onNavigate={handleNavigation} />;
+            case 'explore':
+                return <ExploreTrailsPage onNavigate={handleNavigation} />;
+            case 'trailDetail':
+                return pageData ? <TrailDetailsPage trail={pageData} onNavigate={handleNavigation} /> : <ExploreTrailsPage onNavigate={handleNavigation} />;
+            case 'community':
+                return <CommunityPage />;
+            case 'partners':
+                return <FindPartnersPage />;
+            case 'about':
+                return <AboutPage />;
+            default:
+                return <HomePage onNavigate={handleNavigation} />;
+        }
+    };
+
+    return (
+        <div className="min-h-screen flex flex-col">
+            <Header onNavigate={handleNavigation} onLogoClick={() => handleNavigation('home')} currentPage={currentPage} />
+            <main className="flex-grow">
+                {renderPage()}
+            </main>
+            <Footer />
+        </div>
+    );
+};
+
+// --- RENDER THE APP ---
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+    throw new Error("Could not find root element to mount to");
+}
+
+const root = ReactDOM.createRoot(rootElement);
+root.render(
+    <React.StrictMode>
+        <App />
+    </React.StrictMode>
+);
